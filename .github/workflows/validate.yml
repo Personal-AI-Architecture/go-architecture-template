@@ -1,0 +1,22 @@
+name: Validate Go PAA template
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  paa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Checkout pinned PAA contract source
+        uses: actions/checkout@v4
+        with:
+          repository: Personal-AI-Architecture/the-architecture
+          ref: 9565154901e57f184bfdd3cef5f23dd4014e2c03
+          path: paa-source
+      - name: Run Go suite and source drift gate
+        run: go run ./cmd/validate -source-checkout paa-source

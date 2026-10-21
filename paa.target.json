@@ -1,0 +1,38 @@
+{
+  "name": "go-architecture-template",
+  "language": "go",
+  "root": ".",
+  "contracts": {
+    "lock_file": "paa.lock.json"
+  },
+  "commands": [
+    {
+      "name": "typecheck",
+      "command": "go vet ./..."
+    },
+    {
+      "name": "syntax",
+      "command": "go run ./cmd/checks --format-only"
+    },
+    {
+      "name": "contract-checks",
+      "command": "go run ./cmd/checks"
+    },
+    {
+      "name": "unit",
+      "command": "go test ./internal/..."
+    },
+    {
+      "name": "integration",
+      "command": "go test ./test/integration"
+    },
+    {
+      "name": "conformance",
+      "command": "go test ./test/conformance"
+    },
+    {
+      "name": "acceptance",
+      "command": "go run ./cmd/acceptance"
+    }
+  ]
+}
