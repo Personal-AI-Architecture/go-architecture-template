@@ -38,6 +38,7 @@ type Response struct {
 type Gateway struct {
 	Engine        *engine.AgentLoop
 	Memory        *memory.Store
+	CurrentModel  func() string
 	mu            sync.Mutex
 	conversations map[string]*Conversation
 }
@@ -46,7 +47,7 @@ func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
 	if memoryStore == nil {
 		memoryStore = memory.NewStore(".paa-memory")
 	}
-	return &Gateway{Engine: engineLoop, Memory: memoryStore, conversations: map[string]*Conversation{}}
+	return &Gateway{Engine: engineLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, conversations: map[string]*Conversation{}}
 }
 
 func (g *Gateway) Handle(ctx context.Context, method, path string, body map[string]any, headers map[string]string) Response {
@@ -111,20 +112,25 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	events := g.Engine.Run(ctx, types.EngineRequest{
 		Messages: messages,
 		Metadata: types.EngineRequestMetadata{
-			CorrelationID:    correlationID,
-			ConversationID:   conversationID,
-			ActorID:          actorID,
-			ActorPermissions: splitPermissions(actorPermissions),
+			CorrelationID:  correlationID,
+			ConversationID: conversationID,
+			ClientContext:  metadata,
+		},
+		Model: g.CurrentModel(),
+		AuthContext: map[string]any{
+			"actor":             map[string]any{"id": actorID, "type": "owner", "display_name": actorID, "status": "active", "created": timestamp()},
+			"authentication_id": newID("authn"), "authenticated_at": timestamp(), "correlation_id": correlationID,
 		},
 	}, headers)
 
 	textParts := make([]string, 0)
 	for index := range events {
 		if events[index].Event == "text-delta" {
-			if text, ok := events[index].Data["text"].(string); ok {
+			if text, ok := events[index].Data["content"].(string); ok {
 				textParts = append(textParts, text)
 			}
 		}
+		events[index].Data["_event_type"] = events[index].Event
 		if events[index].Event == "done" {
 			if _, ok := events[index].Data["message_id"]; !ok {
 				events[index].Data["message_id"] = newID("msg")
@@ -136,7 +142,7 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 	if len(textParts) > 0 {
 		g.mu.Lock()
-		g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: strings.Join(textParts, "")})
+		g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}})
 		g.mu.Unlock()
 	}
 	return Response{
@@ -178,35 +184,65 @@ func (g *Gateway) getConversation(id string) Response {
 	return Response{Status: 200, Headers: jsonHeaders(), Body: map[string]any{"id": conversation.ID, "created_at": conversation.CreatedAt, "updated_at": conversation.UpdatedAt, "messages": messages}}
 }
 
-func parsePublicRequest(body map[string]any) (string, map[string]any, bool) {
+func parsePublicRequest(body map[string]any) ([]map[string]any, map[string]any, bool) {
 	if body == nil {
-		return "", nil, false
+		return nil, nil, false
 	}
 	if _, exists := body["messages"]; exists {
-		return "", nil, false
+		return nil, nil, false
 	}
 	for key := range body {
 		if key != "content" && key != "metadata" {
-			return "", nil, false
+			return nil, nil, false
 		}
 	}
-	content, ok := body["content"].(string)
-	if !ok || strings.TrimSpace(content) == "" {
-		return "", nil, false
+	var rawParts []any
+	switch value := body["content"].(type) {
+	case []any:
+		rawParts = value
+	case []map[string]any:
+		for _, part := range value {
+			rawParts = append(rawParts, part)
+		}
+	default:
+		return nil, nil, false
+	}
+	if len(rawParts) == 0 {
+		return nil, nil, false
+	}
+	content := make([]map[string]any, 0, len(rawParts))
+	for _, item := range rawParts {
+		part, ok := item.(map[string]any)
+		if !ok {
+			return nil, nil, false
+		}
+		switch part["type"] {
+		case "text":
+			if _, ok := part["text"].(string); !ok {
+				return nil, nil, false
+			}
+		case "image", "file":
+			if _, ok := part["url"].(string); !ok {
+				return nil, nil, false
+			}
+		default:
+			return nil, nil, false
+		}
+		content = append(content, part)
 	}
 	metadata := map[string]any{}
 	if raw, exists := body["metadata"]; exists {
 		var ok bool
 		metadata, ok = raw.(map[string]any)
 		if !ok {
-			return "", nil, false
+			return nil, nil, false
 		}
 	}
 	return content, metadata, true
 }
 
 func errorResponse(status int, code, message string) Response {
-	return Response{Status: status, Headers: jsonHeaders(), Body: map[string]any{"error": map[string]any{"code": code, "message": message}}}
+	return Response{Status: status, Headers: jsonHeaders(), Body: map[string]any{"code": code, "message": message}}
 }
 
 func jsonHeaders() map[string]string {

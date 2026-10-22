@@ -12,7 +12,7 @@ type ToolCall struct {
 
 type Message struct {
 	Role       string     `json:"role"`
-	Content    string     `json:"content"`
+	Content    any        `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
@@ -38,8 +38,10 @@ type EngineRequestMetadata struct {
 }
 
 type EngineRequest struct {
-	Messages []Message             `json:"messages"`
-	Metadata EngineRequestMetadata `json:"metadata"`
+	Messages    []Message             `json:"messages"`
+	Metadata    EngineRequestMetadata `json:"metadata"`
+	Model       string                `json:"model"`
+	AuthContext map[string]any        `json:"auth_context"`
 }
 
 type CompletionRequest struct {

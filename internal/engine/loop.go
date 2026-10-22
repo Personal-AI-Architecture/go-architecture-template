@@ -19,13 +19,18 @@ func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorH
 	if request.Metadata.CorrelationID == "" {
 		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": "Missing correlation_id."}}}
 	}
-	if header(actorHeaders, "X-Actor-ID") == "" || header(actorHeaders, "X-Actor-Permissions") == "" {
-		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": "Missing required actor headers."}}}
+	actor, ok := request.AuthContext["actor"].(map[string]any)
+	if !ok || actor["id"] == "" || request.AuthContext["correlation_id"] != request.Metadata.CorrelationID {
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "unauthorized", "message": "Missing authenticated actor context."}}}
+	}
+	if request.Model == "" {
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "invalid_request", "message": "Missing selected model."}}}
 	}
 	chunks, err := a.Adapter.Stream(ctx, types.CompletionRequest{
 		Messages: request.Messages,
 		Tools:    append([]types.ToolDefinition(nil), a.Tools...),
 		Stream:   true,
+		Model:    request.Model,
 	})
 	if err != nil {
 		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": err.Error()}}}
@@ -35,7 +40,7 @@ func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorH
 		switch chunk.Type {
 		case "text-delta":
 			if content, ok := chunk.Delta["content"].(string); ok && content != "" {
-				events = append(events, types.StreamEvent{Event: "text-delta", Data: map[string]any{"text": content}})
+				events = append(events, types.StreamEvent{Event: "text-delta", Data: map[string]any{"content": content}})
 			}
 		case "tool-call":
 			events = append(events, types.StreamEvent{Event: "tool-call", Data: chunk.Delta})

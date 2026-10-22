@@ -13,6 +13,7 @@ func TestAgentLoopEmitsCanonicalEvents(t *testing.T) {
 	events := loop.Run(context.Background(), types.EngineRequest{
 		Messages: []types.Message{{Role: "user", Content: "Hi"}},
 		Metadata: types.EngineRequestMetadata{CorrelationID: "corr-1"},
+		Model:    "mock", AuthContext: map[string]any{"actor": map[string]any{"id": "actor-1"}, "correlation_id": "corr-1"},
 	}, map[string]string{"X-Actor-ID": "actor-1", "X-Actor-Permissions": "memory:read"})
 	if len(events) != 2 || events[0].Event != "text-delta" || events[1].Event != "done" {
 		t.Fatalf("unexpected events: %#v", events)

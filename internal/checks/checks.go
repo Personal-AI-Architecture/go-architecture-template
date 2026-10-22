@@ -111,9 +111,9 @@ func CheckContracts(root, sourceCheckout string) []string {
 		}
 	}
 
-	gateway := readText(root, "specs/openapi/gateway-api.yaml")
-	engine := readText(root, "specs/openapi/gateway-engine.yaml")
-	model := readText(root, "specs/openapi/model-api.yaml")
+	gateway := readText(root, "contracts/openapi/gateway-api.yaml")
+	engine := readText(root, "contracts/openapi/gateway-engine.yaml")
+	model := readText(root, "contracts/openapi/model-api.yaml")
 	for _, route := range []string{"/conversations/messages", "/conversations", "/conversations/{id}", "/conversations/{id}/messages"} {
 		if !strings.Contains(gateway, "  "+route+":") {
 			errors = append(errors, "Gateway API path is missing: "+route+".")
@@ -127,7 +127,7 @@ func CheckContracts(root, sourceCheckout string) []string {
 			errors = append(errors, "Gateway schema is missing: "+marker+".")
 		}
 	}
-	for _, marker := range []string{"/engine/chat:", "EngineRequest:", "RequestMetadata:", "SSEStream:", "X-Actor-ID", "X-Actor-Permissions"} {
+	for _, marker := range []string{"/agent-loop/chat:", "AgentLoopRequest:", "RequestMetadata:", "SSEStream:", "auth_context:"} {
 		if !strings.Contains(engine, marker) {
 			errors = append(errors, "Gateway-Agent Loop contract is missing: "+marker+".")
 		}
@@ -141,11 +141,18 @@ func CheckContracts(root, sourceCheckout string) []string {
 		errors = append(errors, "Model API promotes a provider-native route into the PAA contract.")
 	}
 	for relative, required := range map[string][]string{
-		"specs/schemas/configuration.json":   {"memory_root", "provider_adapter", "auth_mode", "tool_sources"},
-		"specs/schemas/identity.json":        {"id", "type", "display_name", "status", "created"},
-		"specs/schemas/message.json":         {"role", "content"},
-		"specs/schemas/policy.json":          {"subject", "resource", "action", "effect"},
-		"specs/schemas/tool-definition.json": {"name", "description", "parameters"},
+		"contracts/schemas/configuration.json":         {"memory_root", "provider_adapter", "auth_mode", "tool_sources"},
+		"contracts/schemas/identity.json":              {"id", "type", "display_name", "status", "created"},
+		"contracts/schemas/message.json":               {"role", "content"},
+		"contracts/schemas/policy.json":                {"subject", "resource", "action", "effect"},
+		"contracts/schemas/tool-definition.json":       {"name", "description", "parameters", "source", "visibility"},
+		"contracts/schemas/auth-context.json":          {"actor", "authentication_id", "authenticated_at", "correlation_id"},
+		"contracts/schemas/authentication-result.json": {"authenticated", "reason", "correlation_id"},
+		"contracts/schemas/authorization-request.json": {"actor_id", "resource", "action", "correlation_id"},
+		"contracts/schemas/authorization-result.json":  {"allowed", "reason", "audit_id", "correlation_id"},
+		"contracts/schemas/approval-request.json":      {"request_id", "tool_name", "summary", "status", "created_at", "expires_at"},
+		"contracts/schemas/approval-decision.json":     {"request_id", "decision", "decided_at"},
+		"contracts/schemas/audit-record.json":          {"id", "occurred_at", "event", "actor_id", "action", "result", "correlation_id"},
 	} {
 		var schema map[string]any
 		bytes := []byte(readText(root, relative))

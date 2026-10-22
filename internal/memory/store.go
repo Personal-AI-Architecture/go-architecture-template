@@ -7,7 +7,7 @@ type Entry struct {
 	ID             string         `json:"id,omitempty"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	Role           string         `json:"role,omitempty"`
-	Content        string         `json:"content,omitempty"`
+	Content        any            `json:"content,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 

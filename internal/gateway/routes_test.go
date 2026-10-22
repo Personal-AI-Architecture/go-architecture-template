@@ -10,7 +10,7 @@ import (
 
 func TestCanonicalMessageRouteStreamsAndPersists(t *testing.T) {
 	service := New(engine.NewAgentLoop(adapters.MockAdapter{Response: "gateway-ok"}, nil), nil)
-	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": "Hello"}, map[string]string{
+	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}}, map[string]string{
 		"x-actor-id": "actor-1", "x-actor-permissions": "memory:read,memory:write",
 	})
 	if response.Status != 200 || response.Headers["X-Conversation-ID"] == "" || len(response.Stream) < 2 {
@@ -19,6 +19,21 @@ func TestCanonicalMessageRouteStreamsAndPersists(t *testing.T) {
 	detail := service.Handle(context.Background(), "GET", "/conversations/"+response.Headers["X-Conversation-ID"], nil, nil)
 	if len(detail.Body["messages"].([]map[string]any)) != 2 {
 		t.Fatalf("expected persisted user and assistant messages: %#v", detail.Body)
+	}
+	messages := detail.Body["messages"].([]map[string]any)
+	if _, ok := messages[0]["content"].([]map[string]any); !ok {
+		t.Fatalf("user content did not retain canonical parts: %#v", messages[0])
+	}
+	if _, ok := messages[1]["content"].([]map[string]any); !ok {
+		t.Fatalf("assistant content did not use canonical parts: %#v", messages[1])
+	}
+}
+
+func TestOldStringContentIsRejected(t *testing.T) {
+	service := New(engine.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
+	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": "Hello"}, map[string]string{"X-Actor-ID": "actor", "X-Actor-Permissions": "read"})
+	if response.Status != 400 {
+		t.Fatalf("expected invalid request: %#v", response)
 	}
 }
 
