@@ -12,7 +12,7 @@ import (
 
 func main() {
 	service := gateway.New(engine.NewAgentLoop(adapters.MockAdapter{Response: "Hello from a PAA Agent Loop."}, nil), nil)
-	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": "Explain what PAA is."}, map[string]string{
+	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "Explain what PAA is."}}}, map[string]string{
 		"X-Actor-ID":          "demo-user",
 		"X-Actor-Permissions": "memory:read,memory:write",
 	})

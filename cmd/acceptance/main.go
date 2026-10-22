@@ -47,7 +47,7 @@ func run() error {
 
 	service := gateway.New(engine.NewAgentLoop(adapters.MockAdapter{Response: "acceptance-ok"}, nil), memory.NewStore(runtime.MemoryRoot))
 	headers := map[string]string{"x-actor-id": "actor-acceptance", "x-actor-permissions": "memory:read,memory:write"}
-	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": "Hello"}, headers)
+	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}}, headers)
 	if response.Status != 200 || len(response.Stream) < 2 {
 		return fmt.Errorf("canonical gateway route did not stream")
 	}

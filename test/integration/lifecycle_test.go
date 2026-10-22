@@ -28,7 +28,7 @@ func TestGatewayHTTPAndMemoryLifecycle(t *testing.T) {
 		t.Fatalf("unexpected health status: %d", health.StatusCode)
 	}
 
-	body, _ := json.Marshal(map[string]any{"content": "Hello"})
+	body, _ := json.Marshal(map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}})
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/conversations/messages", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Actor-ID", "actor-http")
