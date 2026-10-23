@@ -21,10 +21,15 @@ type ToolDefinition struct {
 	Name                string         `json:"name"`
 	Description         string         `json:"description"`
 	Parameters          map[string]any `json:"parameters"`
-	Source              string         `json:"source,omitempty"`
+	Source              ToolSource     `json:"source"`
 	Category            string         `json:"category,omitempty"`
 	MutatesState        bool           `json:"mutates_state,omitempty"`
 	RequiredPermissions []string       `json:"required_permissions,omitempty"`
+}
+
+type ToolSource struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
 }
 
 type EngineRequestMetadata struct {

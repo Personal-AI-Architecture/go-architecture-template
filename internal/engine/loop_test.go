@@ -9,12 +9,40 @@ import (
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
 
-type recordingModelAdapter struct{ requests []types.CompletionRequest }
+type recordingModelAdapter struct {
+	requests []types.CompletionRequest
+	chunks   []types.ModelStreamChunk
+}
 
 func (a *recordingModelAdapter) Name() string { return "recording" }
 func (a *recordingModelAdapter) Stream(_ context.Context, request types.CompletionRequest) ([]types.ModelStreamChunk, error) {
 	a.requests = append(a.requests, request)
+	if len(a.chunks) > 0 {
+		return a.chunks, nil
+	}
 	return []types.ModelStreamChunk{{Type: "done", Delta: map[string]any{"finish_reason": "stop"}}}, nil
+}
+
+func TestModelErrorCategoriesAreSafeAndStopTheTurn(t *testing.T) {
+	for _, scenario := range []struct{ code, capability string }{{"model_unavailable", ""}, {"capability_unsupported", "image_input"}} {
+		adapter := &recordingModelAdapter{chunks: []types.ModelStreamChunk{{Type: "error", Delta: map[string]any{"code": scenario.code, "capability": scenario.capability, "message": "secret=/tmp/key"}}}}
+		loop := NewAgentLoop(adapter, nil)
+		events := loop.Run(context.Background(), types.EngineRequest{Messages: []types.Message{{Role: "user", Content: "hello"}}, Metadata: types.EngineRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr"}}, nil)
+		if len(events) != 1 || events[0].Event != "error" || events[0].Data["code"] != scenario.code || len(adapter.requests) != 1 || adapter.requests[0].Model != "mock" || adapter.requests[0].Provider != "local" || strings.Contains(events[0].Data["message"].(string), "secret") {
+			t.Fatalf("model failure was lost or leaked: %#v", events)
+		}
+		if scenario.capability != "" && events[0].Data["capability"] != scenario.capability {
+			t.Fatalf("missing capability: %#v", events)
+		}
+	}
+}
+
+func TestAuthContextRejectsUnknownTopLevelField(t *testing.T) {
+	loop := NewAgentLoop(adapters.MockAdapter{}, nil)
+	events := loop.Run(context.Background(), types.EngineRequest{Metadata: types.EngineRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr", "unexpected": "spoof"}}, nil)
+	if len(events) != 1 || events[0].Data["code"] != "auth_error" {
+		t.Fatalf("unknown auth field accepted: %#v", events)
+	}
 }
 
 func TestAgentLoopEmitsCanonicalEvents(t *testing.T) {

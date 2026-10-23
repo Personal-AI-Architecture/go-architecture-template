@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
@@ -24,6 +26,39 @@ type ProviderProfile struct {
 	BaseURL            string
 	APIKeyEnv          string
 	ModelContextLimits map[string]int
+}
+
+var providerCapabilityName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+
+func normalizedProviderFailure(body []byte) map[string]any {
+	var response struct {
+		Error struct {
+			Code       string `json:"code"`
+			Type       string `json:"type"`
+			Capability string `json:"capability"`
+			Param      string `json:"param"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &response) != nil {
+		return map[string]any{"code": "provider_error"}
+	}
+	code := response.Error.Code
+	if code == "" {
+		code = response.Error.Type
+	}
+	if code == "model_not_found" || code == "model_unavailable" {
+		return map[string]any{"code": "model_unavailable"}
+	}
+	if code == "unsupported_capability" || code == "capability_unsupported" {
+		capability := response.Error.Capability
+		if capability == "" {
+			capability = response.Error.Param
+		}
+		if providerCapabilityName.MatchString(capability) {
+			return map[string]any{"code": "capability_unsupported", "capability": capability}
+		}
+	}
+	return map[string]any{"code": "provider_error"}
 }
 
 func (a OpenAICompatibleAdapter) ContextLimits() types.ContextLimits {
@@ -89,7 +124,8 @@ func (a OpenAICompatibleAdapter) Stream(ctx context.Context, request types.Compl
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("provider returned HTTP %s", response.Status)
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+		return []types.ModelStreamChunk{{Type: "error", Delta: normalizedProviderFailure(body)}}, nil
 	}
 
 	var chunks []types.ModelStreamChunk

@@ -249,17 +249,30 @@ func parsePublicRequest(body map[string]any) ([]map[string]any, map[string]any, 
 		if !ok {
 			return nil, nil, false
 		}
+		allowed := map[string]bool{"type": true, "extensions": true}
 		switch part["type"] {
 		case "text":
+			allowed["text"] = true
 			if _, ok := part["text"].(string); !ok {
 				return nil, nil, false
 			}
 		case "image", "file":
+			allowed["url"], allowed["name"], allowed["mime_type"] = true, true, true
 			if _, ok := part["url"].(string); !ok {
 				return nil, nil, false
 			}
 		default:
 			return nil, nil, false
+		}
+		for key, value := range part {
+			if !allowed[key] {
+				return nil, nil, false
+			}
+			if key == "extensions" {
+				if _, ok := value.(map[string]any); !ok {
+					return nil, nil, false
+				}
+			}
 		}
 		content = append(content, part)
 	}
