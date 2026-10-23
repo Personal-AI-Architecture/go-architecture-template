@@ -38,10 +38,12 @@ type EngineRequestMetadata struct {
 }
 
 type EngineRequest struct {
-	Messages    []Message             `json:"messages"`
-	Metadata    EngineRequestMetadata `json:"metadata"`
-	Model       string                `json:"model"`
-	AuthContext map[string]any        `json:"auth_context"`
+	Messages       []Message             `json:"messages"`
+	Metadata       EngineRequestMetadata `json:"metadata"`
+	Model          string                `json:"model"`
+	Provider       string                `json:"provider"`
+	AuthContext    map[string]any        `json:"auth_context"`
+	ContextSummary map[string]any        `json:"context_summary,omitempty"`
 }
 
 type CompletionRequest struct {
@@ -49,6 +51,7 @@ type CompletionRequest struct {
 	Tools       []ToolDefinition `json:"tools,omitempty"`
 	Stream      bool             `json:"stream"`
 	Model       string           `json:"model,omitempty"`
+	Provider    string           `json:"provider"`
 	MaxTokens   int              `json:"max_tokens,omitempty"`
 	Temperature float64          `json:"temperature,omitempty"`
 }

@@ -5,6 +5,11 @@ It is designed to help you understand PAA boundaries quickly, run a working
 local example without a provider account, and extend the implementation without
 losing contract alignment.
 
+The current contract checks cover per-request model and provider selection,
+provider-profile routing, saved reply provenance, context limits, and notices
+for omitted complete turns. This starter's small text journey is not a full
+implementation of every PAA tool and product conformance case.
+
 ## What you get
 
 - A canonical PAA Gateway with conversation routes and SSE responses.
@@ -79,7 +84,7 @@ go run ./cmd/validate \
 The current contract baseline is pinned to:
 
 ```text
-55707c2627e308eb3458e67db2644c458f95b236
+28e9a275a0f5e062aa4452892e9ec70644f88c69
 ```
 
 The Go checks are the internal implementation gate. The shared validator is

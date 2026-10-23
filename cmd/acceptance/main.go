@@ -33,7 +33,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	adapter, err := adapters.LoadModelAdapter(runtime.ProviderAdapter, adapters.OpenAICompatibleAdapter{APIBaseURL: "http://provider.local/v1", Model: "test"})
+	adapter, err := adapters.LoadModelAdapter(runtime.ProviderAdapter, adapters.OpenAICompatibleAdapter{APIBaseURL: "http://provider.local/v1"})
 	if err != nil || adapter.Name() != "mock" {
 		return fmt.Errorf("mock adapter selection failed")
 	}
