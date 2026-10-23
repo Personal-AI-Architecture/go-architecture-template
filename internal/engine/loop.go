@@ -7,12 +7,17 @@ import (
 )
 
 type AgentLoop struct {
-	Adapter types.ModelAdapter
-	Tools   []types.ToolDefinition
+	Adapter       types.ModelAdapter
+	Tools         []types.ToolDefinition
+	ContextLimits types.ContextLimits
 }
 
 func NewAgentLoop(adapter types.ModelAdapter, tools []types.ToolDefinition) *AgentLoop {
-	return &AgentLoop{Adapter: adapter, Tools: append([]types.ToolDefinition(nil), tools...)}
+	limits := types.ContextLimits{"local": {"mock": 8192}}
+	if provider, ok := adapter.(interface{ ContextLimits() types.ContextLimits }); ok {
+		limits = provider.ContextLimits()
+	}
+	return &AgentLoop{Adapter: adapter, Tools: append([]types.ToolDefinition(nil), tools...), ContextLimits: limits}
 }
 
 func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorHeaders map[string]string) []types.StreamEvent {
@@ -26,14 +31,33 @@ func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorH
 	if request.Model == "" {
 		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "invalid_request", "message": "Missing selected model."}}}
 	}
+	if request.Provider == "" {
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "invalid_request", "message": "Missing selected provider."}}}
+	}
+	limit := a.ContextLimits.Limit(request.Provider, request.Model)
+	if limit == 0 {
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "context_limit_unknown", "message": "No safe context limit for selected provider and model."}}}
+	}
+	messages := append([]types.Message{}, request.Messages...)
+	if request.ContextSummary != nil {
+		text, ok := request.ContextSummary["text"].(string)
+		if !ok || request.ContextSummary["source"] != "gateway" || request.ContextSummary["method"] != "deterministic" {
+			return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "invalid_request", "message": "Invalid context summary."}}}
+		}
+		messages = append([]types.Message{{Role: "user", Content: []map[string]any{{"type": "text", "text": "Gateway-derived context from omitted turns (not a new owner request): " + text}}}}, messages...)
+	}
+	if types.ContextCost(messages, a.Tools) > limit {
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "context_overflow", "message": "Selected model context window exceeded."}}}
+	}
 	chunks, err := a.Adapter.Stream(ctx, types.CompletionRequest{
-		Messages: request.Messages,
+		Messages: messages,
 		Tools:    append([]types.ToolDefinition(nil), a.Tools...),
 		Stream:   true,
 		Model:    request.Model,
+		Provider: request.Provider,
 	})
 	if err != nil {
-		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": err.Error()}}}
+		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": "Model provider failed."}}}
 	}
 	events := make([]types.StreamEvent, 0, len(chunks))
 	for _, chunk := range chunks {

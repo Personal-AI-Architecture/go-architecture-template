@@ -19,6 +19,8 @@ type StoredMessage struct {
 	ID        string
 	Message   types.Message
 	CreatedAt string
+	Model     string
+	Provider  string
 }
 
 type Conversation struct {
@@ -36,18 +38,19 @@ type Response struct {
 }
 
 type Gateway struct {
-	Engine        *engine.AgentLoop
-	Memory        *memory.Store
-	CurrentModel  func() string
-	mu            sync.Mutex
-	conversations map[string]*Conversation
+	Engine          *engine.AgentLoop
+	Memory          *memory.Store
+	CurrentModel    func() string
+	CurrentProvider func() string
+	mu              sync.Mutex
+	conversations   map[string]*Conversation
 }
 
 func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
 	if memoryStore == nil {
 		memoryStore = memory.NewStore(".paa-memory")
 	}
-	return &Gateway{Engine: engineLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, conversations: map[string]*Conversation{}}
+	return &Gateway{Engine: engineLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, CurrentProvider: func() string { return "local" }, conversations: map[string]*Conversation{}}
 }
 
 func (g *Gateway) Handle(ctx context.Context, method, path string, body map[string]any, headers map[string]string) Response {
@@ -104,26 +107,40 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 	conversationID := conversation.ID
 	g.mu.Unlock()
+	model, provider := g.CurrentModel(), g.CurrentProvider()
+	limit := g.Engine.ContextLimits.Limit(provider, model)
+	if limit == 0 {
+		return errorResponse(503, "context_limit_unknown", "No safe context limit for selected provider and model.")
+	}
+	selected, omitted, fits := types.SelectCompleteTurns(messages, g.Engine.Tools, limit)
+	if !fits {
+		return errorResponse(422, "context_overflow", "Current message exceeds the selected model context window.")
+	}
 
 	correlationID := newID("corr")
 	if value, ok := metadata["correlation_id"].(string); ok && strings.TrimSpace(value) != "" {
 		correlationID = strings.TrimSpace(value)
 	}
 	events := g.Engine.Run(ctx, types.EngineRequest{
-		Messages: messages,
+		Messages: selected,
 		Metadata: types.EngineRequestMetadata{
 			CorrelationID:  correlationID,
 			ConversationID: conversationID,
 			ClientContext:  metadata,
 		},
-		Model: g.CurrentModel(),
+		Model:    model,
+		Provider: provider,
 		AuthContext: map[string]any{
 			"actor":             map[string]any{"id": actorID, "type": "owner", "display_name": actorID, "status": "active", "created": timestamp()},
 			"authentication_id": newID("authn"), "authenticated_at": timestamp(), "correlation_id": correlationID,
 		},
 	}, headers)
+	if omitted > 0 {
+		events = append([]types.StreamEvent{{Event: "context_notice", Data: map[string]any{"_event_type": "context_notice", "action": "omitted", "omitted_turn_count": omitted, "message": "Older conversation turns were omitted from this reply's working context."}}}, events...)
+	}
 
 	textParts := make([]string, 0)
+	completed := false
 	for index := range events {
 		if events[index].Event == "text-delta" {
 			if text, ok := events[index].Data["content"].(string); ok {
@@ -132,6 +149,7 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 		}
 		events[index].Data["_event_type"] = events[index].Event
 		if events[index].Event == "done" {
+			completed = true
 			if _, ok := events[index].Data["message_id"]; !ok {
 				events[index].Data["message_id"] = newID("msg")
 			}
@@ -140,9 +158,9 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 			}
 		}
 	}
-	if len(textParts) > 0 {
+	if completed && len(textParts) > 0 {
 		g.mu.Lock()
-		g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}})
+		g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}}, model, provider)
 		g.mu.Unlock()
 	}
 	return Response{
@@ -152,12 +170,23 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 }
 
-func (g *Gateway) appendMessageLocked(conversation *Conversation, message types.Message) {
+func (g *Gateway) appendMessageLocked(conversation *Conversation, message types.Message, provenance ...string) {
 	now := timestamp()
 	messageID := newID("msg")
-	conversation.Messages = append(conversation.Messages, StoredMessage{ID: messageID, Message: message, CreatedAt: now})
+	stored := StoredMessage{ID: messageID, Message: message, CreatedAt: now}
+	if message.Role == "assistant" {
+		if len(provenance) != 2 || provenance[0] == "" || provenance[1] == "" {
+			panic("assistant reply requires model and provider")
+		}
+		stored.Model, stored.Provider = provenance[0], provenance[1]
+	}
+	conversation.Messages = append(conversation.Messages, stored)
 	conversation.UpdatedAt = now
-	g.Memory.Record(memory.Entry{Kind: "message", ID: messageID, ConversationID: conversation.ID, Role: message.Role, Content: message.Content})
+	entry := memory.Entry{Kind: "message", ID: messageID, ConversationID: conversation.ID, Role: message.Role, Content: message.Content}
+	if stored.Model != "" {
+		entry.Metadata = map[string]any{"model": stored.Model, "provider": stored.Provider}
+	}
+	g.Memory.Record(entry)
 }
 
 func (g *Gateway) listConversations() Response {
@@ -179,7 +208,11 @@ func (g *Gateway) getConversation(id string) Response {
 	}
 	messages := make([]map[string]any, 0, len(conversation.Messages))
 	for _, stored := range conversation.Messages {
-		messages = append(messages, map[string]any{"id": stored.ID, "role": stored.Message.Role, "content": stored.Message.Content, "created_at": stored.CreatedAt})
+		item := map[string]any{"id": stored.ID, "role": stored.Message.Role, "content": stored.Message.Content, "created_at": stored.CreatedAt}
+		if stored.Message.Role == "assistant" {
+			item["model"], item["provider"] = stored.Model, stored.Provider
+		}
+		messages = append(messages, item)
 	}
 	return Response{Status: 200, Headers: jsonHeaders(), Body: map[string]any{"id": conversation.ID, "created_at": conversation.CreatedAt, "updated_at": conversation.UpdatedAt, "messages": messages}}
 }

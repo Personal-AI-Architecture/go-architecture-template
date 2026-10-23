@@ -7,16 +7,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
 
 type OpenAICompatibleAdapter struct {
-	APIBaseURL string
-	APIKey     string
-	Model      string
-	Client     *http.Client
+	APIBaseURL       string
+	APIKey           string
+	Client           *http.Client
+	ProviderProfiles map[string]ProviderProfile
+}
+
+type ProviderProfile struct {
+	BaseURL            string
+	APIKeyEnv          string
+	ModelContextLimits map[string]int
+}
+
+func (a OpenAICompatibleAdapter) ContextLimits() types.ContextLimits {
+	limits := types.ContextLimits{}
+	for name, profile := range a.ProviderProfiles {
+		limits[name] = profile.ModelContextLimits
+	}
+	return limits
 }
 
 func (a OpenAICompatibleAdapter) Name() string {
@@ -24,30 +39,49 @@ func (a OpenAICompatibleAdapter) Name() string {
 }
 
 func (a OpenAICompatibleAdapter) Stream(ctx context.Context, request types.CompletionRequest) ([]types.ModelStreamChunk, error) {
+	if strings.TrimSpace(request.Model) == "" || strings.TrimSpace(request.Provider) == "" {
+		return nil, fmt.Errorf("model API request requires model and provider")
+	}
+	baseURL, apiKey := a.APIBaseURL, a.APIKey
+	if len(a.ProviderProfiles) > 0 {
+		profile, ok := a.ProviderProfiles[request.Provider]
+		if !ok {
+			return nil, fmt.Errorf("unknown selected provider profile")
+		}
+		baseURL, apiKey = profile.BaseURL, ""
+		if profile.APIKeyEnv != "" {
+			apiKey = os.Getenv(profile.APIKeyEnv)
+			if apiKey == "" {
+				return nil, fmt.Errorf("selected provider profile secret is unavailable")
+			}
+		}
+	} else if request.Provider != "local" {
+		return nil, fmt.Errorf("unknown selected provider profile")
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return nil, fmt.Errorf("selected provider profile has no base URL")
+	}
 	client := a.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
 	payload := map[string]any{
-		"model":    a.Model,
+		"model":    request.Model,
 		"messages": providerMessages(request.Messages),
 		"stream":   true,
-	}
-	if request.Model != "" {
-		payload["model"] = request.Model
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	endpoint := strings.TrimRight(a.APIBaseURL, "/") + "/chat/completions"
+	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if a.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+a.APIKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	response, err := client.Do(req)
 	if err != nil {
