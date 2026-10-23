@@ -84,7 +84,7 @@ go run ./cmd/validate \
 The current contract baseline is pinned to:
 
 ```text
-aa0ff01757306b2b3aa1015bb4366a5a578d5102
+cfeb96df743feee91afc80ac81f0c4fd9a62c123
 ```
 
 The Go checks are the internal implementation gate. The shared validator is
