@@ -9,12 +9,31 @@ import (
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
 
-type recordingAdapter struct{ requests []types.CompletionRequest }
+type recordingAdapter struct {
+	requests []types.CompletionRequest
+	chunks   []types.ModelStreamChunk
+}
 
 func (a *recordingAdapter) Name() string { return "recording" }
 func (a *recordingAdapter) Stream(_ context.Context, request types.CompletionRequest) ([]types.ModelStreamChunk, error) {
 	a.requests = append(a.requests, request)
+	if len(a.chunks) > 0 {
+		return a.chunks, nil
+	}
 	return []types.ModelStreamChunk{{Type: "text-delta", Delta: map[string]any{"content": "answer"}}, {Type: "done", Delta: map[string]any{"finish_reason": "stop"}}}, nil
+}
+
+func TestGatewayForwardsCanonicalModelErrorWithoutSavingReply(t *testing.T) {
+	adapter := &recordingAdapter{chunks: []types.ModelStreamChunk{{Type: "error", Delta: map[string]any{"code": "capability_unsupported", "capability": "image_input", "message": "secret=/tmp/key"}}}}
+	service := New(engine.NewAgentLoop(adapter, nil), nil)
+	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "hello"}}}, map[string]string{"X-Actor-ID": "owner", "X-Actor-Permissions": "read"})
+	if len(response.Stream) != 1 || response.Stream[0].Event != "error" || response.Stream[0].Data["code"] != "capability_unsupported" || response.Stream[0].Data["capability"] != "image_input" || len(adapter.requests) != 1 {
+		t.Fatalf("model error not forwarded: %#v", response)
+	}
+	detail := service.Handle(context.Background(), "GET", "/conversations/"+response.Headers["X-Conversation-ID"], nil, nil)
+	if len(detail.Body["messages"].([]map[string]any)) != 1 {
+		t.Fatalf("failed reply was persisted: %#v", detail.Body)
+	}
 }
 
 func TestCanonicalMessageRouteStreamsAndPersists(t *testing.T) {
@@ -51,6 +70,19 @@ func TestPublicRequestRejectsProviderShapedMessages(t *testing.T) {
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"messages": []any{}}, map[string]string{"X-Actor-ID": "actor", "X-Actor-Permissions": "read"})
 	if response.Status != 400 {
 		t.Fatalf("expected invalid request: %#v", response)
+	}
+}
+
+func TestPartExtensionsAreInertAndUnknownCoreFieldsFail(t *testing.T) {
+	service := New(engine.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
+	headers := map[string]string{"X-Actor-ID": "owner", "X-Actor-Permissions": "read"}
+	valid := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "hello", "extensions": map[string]any{"future": "ignored"}}}}, headers)
+	if valid.Status != 200 {
+		t.Fatalf("extension rejected: %#v", valid)
+	}
+	invalid := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "hello", "future": "outside extensions"}}}, headers)
+	if invalid.Status != 400 {
+		t.Fatalf("unknown core field accepted: %#v", invalid)
 	}
 }
 

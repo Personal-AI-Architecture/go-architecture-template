@@ -46,6 +46,27 @@ func TestOpenAICompatibleAdapterNormalizesProviderStream(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleAdapterNormalizesExplicitModelFailures(t *testing.T) {
+	for _, scenario := range []struct{ providerCode, capability, want string }{
+		{"model_not_found", "", "model_unavailable"},
+		{"unsupported_capability", "image_input", "capability_unsupported"},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"code":"` + scenario.providerCode + `","capability":"` + scenario.capability + `","message":"secret=/tmp/key"}}`))
+		}))
+		adapter := OpenAICompatibleAdapter{APIBaseURL: server.URL, Client: server.Client()}
+		chunks, err := adapter.Stream(context.Background(), types.CompletionRequest{Model: "m", Provider: "local", Stream: true})
+		server.Close()
+		if err != nil || len(chunks) != 1 || chunks[0].Type != "error" || chunks[0].Delta["code"] != scenario.want {
+			t.Fatalf("incorrect normalized failure: %#v %v", chunks, err)
+		}
+		if _, found := chunks[0].Delta["message"]; found {
+			t.Fatal("provider message leaked")
+		}
+	}
+}
+
 func TestProviderProfileSelectsEndpointAndNeverFallsBack(t *testing.T) {
 	first := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n"))

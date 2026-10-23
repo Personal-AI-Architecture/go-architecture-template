@@ -2,9 +2,26 @@ package engine
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
+
+var capabilityName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+
+func safeModelError(delta map[string]any) map[string]any {
+	code, _ := delta["code"].(string)
+	switch code {
+	case "model_unavailable":
+		return map[string]any{"code": code, "message": "The selected model is unavailable through the selected provider."}
+	case "capability_unsupported":
+		capability, _ := delta["capability"].(string)
+		if capabilityName.MatchString(capability) {
+			return map[string]any{"code": code, "capability": capability, "message": "The selected model does not support the requested capability."}
+		}
+	}
+	return map[string]any{"code": "provider_error", "message": "Model provider failed."}
+}
 
 type AgentLoop struct {
 	Adapter       types.ModelAdapter
@@ -21,6 +38,13 @@ func NewAgentLoop(adapter types.ModelAdapter, tools []types.ToolDefinition) *Age
 }
 
 func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorHeaders map[string]string) []types.StreamEvent {
+	for key := range request.AuthContext {
+		switch key {
+		case "actor", "authentication_id", "authenticated_at", "expires_at", "correlation_id":
+		default:
+			return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "auth_error", "message": "Authentication context was rejected."}}}
+		}
+	}
 	if request.Metadata.CorrelationID == "" {
 		return []types.StreamEvent{{Event: "error", Data: map[string]any{"code": "provider_error", "message": "Missing correlation_id."}}}
 	}
@@ -71,7 +95,8 @@ func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorH
 		case "tool-result":
 			events = append(events, types.StreamEvent{Event: "tool-result", Data: chunk.Delta})
 		case "error":
-			events = append(events, types.StreamEvent{Event: "error", Data: chunk.Delta})
+			events = append(events, types.StreamEvent{Event: "error", Data: safeModelError(chunk.Delta)})
+			return events
 		case "done":
 			finishReason := "stop"
 			if value, ok := chunk.Delta["finish_reason"].(string); ok && value != "" {
