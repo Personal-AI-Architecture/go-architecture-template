@@ -4,6 +4,8 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/memory"
 )
 
 const maxRequestBytes = 1024 * 1024
@@ -30,7 +32,7 @@ func Handler(gateway *Gateway, apiKey string) http.Handler {
 			return
 		}
 		var body map[string]any
-		if request.Method == http.MethodPost {
+		if request.Method == http.MethodPost || request.Method == http.MethodPut {
 			if request.ContentLength > maxRequestBytes {
 				writeJSON(writer, http.StatusRequestEntityTooLarge, map[string]any{"code": "request_too_large", "message": "Request body too large."})
 				return
@@ -42,6 +44,32 @@ func Handler(gateway *Gateway, apiKey string) http.Handler {
 					return
 				}
 				body = nil
+			}
+		}
+		if request.URL.Path == "/owner/preferences" {
+			if request.Method == http.MethodGet {
+				preference, found, err := gateway.Memory.ReadPreferences()
+				if err != nil || !found {
+					writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"code": "selection_unavailable", "message": "Preferences unavailable."})
+					return
+				}
+				writeJSON(writer, http.StatusOK, preference)
+				return
+			}
+			if request.Method == http.MethodPut {
+				preference := memory.Preferences{}
+				preference.Model, _ = body["model"].(string)
+				preference.ActiveProviderProfile, _ = body["active_provider_profile"].(string)
+				if preference.Model == "" || preference.ActiveProviderProfile == "" {
+					writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "invalid_request", "message": "Model and active_provider_profile are required."})
+					return
+				}
+				if err := gateway.Memory.WritePreferences(preference); err != nil {
+					writeJSON(writer, http.StatusInternalServerError, map[string]any{"code": "storage_error", "message": "Preferences could not be saved."})
+					return
+				}
+				writeJSON(writer, http.StatusOK, preference)
+				return
 			}
 		}
 		headers := map[string]string{"X-Actor-ID": "local-owner", "X-Actor-Permissions": "memory:read,memory:write"}
