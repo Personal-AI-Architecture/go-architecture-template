@@ -16,7 +16,7 @@ import (
 
 func TestGatewayHTTPAndMemoryLifecycle(t *testing.T) {
 	service := gateway.New(engine.NewAgentLoop(adapters.MockAdapter{Response: "http-ok"}, nil), memory.NewStore("/tmp/paa-go-test-memory"))
-	server := httptest.NewServer(gateway.Handler(service))
+	server := httptest.NewServer(gateway.Handler(service, "test-token"))
 	defer server.Close()
 
 	health, err := http.Get(server.URL + "/health")
@@ -31,8 +31,7 @@ func TestGatewayHTTPAndMemoryLifecycle(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}})
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/conversations/messages", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Actor-ID", "actor-http")
-	request.Header.Set("X-Actor-Permissions", "memory:read,memory:write")
+	request.Header.Set("X-API-Key", "test-token")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

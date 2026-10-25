@@ -2,6 +2,7 @@
   "name": "go-architecture-template",
   "language": "go",
   "root": ".",
+  "live": { "start": "go run ./cmd/server --host $PAA_HOST --port $PAA_PORT" },
   "contracts": {
     "lock_file": "paa.lock.json"
   },
