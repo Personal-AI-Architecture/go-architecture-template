@@ -23,9 +23,9 @@ type OpenAICompatibleAdapter struct {
 }
 
 type ProviderProfile struct {
-	BaseURL            string
-	APIKeyEnv          string
-	ModelContextLimits map[string]int
+	BaseURL            string         `json:"base_url"`
+	APIKeyEnv          string         `json:"api_key_env"`
+	ModelContextLimits map[string]int `json:"model_context_limits"`
 }
 
 var providerCapabilityName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)

@@ -43,13 +43,14 @@ type Response struct {
 }
 
 type Gateway struct {
-	Engine          *engine.AgentLoop
-	Memory          *memory.Store
-	CurrentModel    func() string
-	CurrentProvider func() string
-	mu              sync.Mutex
-	conversations   map[string]*Conversation
-	persistencePath string
+	Engine           *engine.AgentLoop
+	Memory           *memory.Store
+	CurrentModel     func() string
+	CurrentProvider  func() string
+	CurrentSelection func() (string, string, error)
+	mu               sync.Mutex
+	conversations    map[string]*Conversation
+	persistencePath  string
 }
 
 func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
@@ -122,6 +123,18 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	if actorID == "" || actorPermissions == "" {
 		return errorResponse(401, "missing_actor_headers", "Missing required actor headers.")
 	}
+	model, provider := g.CurrentModel(), g.CurrentProvider()
+	if g.CurrentSelection != nil {
+		var err error
+		model, provider, err = g.CurrentSelection()
+		if err != nil || model == "" || provider == "" {
+			return errorResponse(503, "selection_unavailable", "Current model and provider preferences are unavailable.")
+		}
+	}
+	limit := g.Engine.ContextLimits.Limit(provider, model)
+	if limit == 0 {
+		return errorResponse(503, "context_limit_unknown", "No safe context limit for selected provider and model.")
+	}
 
 	g.mu.Lock()
 	conversation := g.conversations[requestedID]
@@ -147,11 +160,6 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 	conversationID := conversation.ID
 	g.mu.Unlock()
-	model, provider := g.CurrentModel(), g.CurrentProvider()
-	limit := g.Engine.ContextLimits.Limit(provider, model)
-	if limit == 0 {
-		return errorResponse(503, "context_limit_unknown", "No safe context limit for selected provider and model.")
-	}
 	selected, omitted, fits := types.SelectCompleteTurns(messages, g.Engine.Tools, limit)
 	if !fits {
 		return errorResponse(422, "context_overflow", "Current message exceeds the selected model context window.")
