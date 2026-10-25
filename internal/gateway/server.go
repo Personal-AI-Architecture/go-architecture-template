@@ -1,11 +1,17 @@
 package gateway
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 )
 
-func Handler(gateway *Gateway) http.Handler {
+const maxRequestBytes = 1024 * 1024
+
+func Handler(gateway *Gateway, apiKey string) http.Handler {
+	if apiKey == "" {
+		panic("a demo API key is required")
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
@@ -15,18 +21,30 @@ func Handler(gateway *Gateway) http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "architecture": "PAA"})
 	})
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+		supplied := request.Header.Get("X-API-Key")
+		if bearer := request.Header.Get("Authorization"); len(bearer) > 7 && bearer[:7] == "Bearer " {
+			supplied = bearer[7:]
+		}
+		if subtle.ConstantTimeCompare([]byte(supplied), []byte(apiKey)) != 1 {
+			writeJSON(writer, http.StatusUnauthorized, map[string]any{"code": "unauthenticated", "message": "Authentication required."})
+			return
+		}
 		var body map[string]any
 		if request.Method == http.MethodPost {
+			if request.ContentLength > maxRequestBytes {
+				writeJSON(writer, http.StatusRequestEntityTooLarge, map[string]any{"code": "request_too_large", "message": "Request body too large."})
+				return
+			}
+			request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBytes)
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				if _, tooLarge := err.(*http.MaxBytesError); tooLarge {
+					writeJSON(writer, http.StatusRequestEntityTooLarge, map[string]any{"code": "request_too_large", "message": "Request body too large."})
+					return
+				}
 				body = nil
 			}
 		}
-		headers := make(map[string]string, len(request.Header))
-		for key, values := range request.Header {
-			if len(values) > 0 {
-				headers[key] = values[0]
-			}
-		}
+		headers := map[string]string{"X-Actor-ID": "local-owner", "X-Actor-Permissions": "memory:read,memory:write"}
 		response := gateway.Handle(request.Context(), request.Method, request.URL.RequestURI(), body, headers)
 		if len(response.Stream) > 0 {
 			writeStream(writer, response)

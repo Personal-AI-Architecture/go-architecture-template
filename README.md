@@ -48,6 +48,7 @@ conversation.
 Start the local server:
 
 ```bash
+export PAA_DEMO_API_KEY='replace-with-a-local-test-token'
 go run ./cmd/server
 ```
 
@@ -55,13 +56,28 @@ In another terminal, check the demo host and send a canonical PAA message:
 
 ```bash
 curl http://127.0.0.1:8000/health
-curl -N -X POST http://127.0.0.1:8000/conversations/messages -H 'Content-Type: application/json' -H 'X-Actor-ID: demo-user' -H 'X-Actor-Permissions: memory:read,memory:write' -d '{"content":[{"type":"text","text":"Explain what PAA is."}]}'
+curl -N -X POST http://127.0.0.1:8000/conversations/messages -H 'Content-Type: application/json' -H "X-API-Key: $PAA_DEMO_API_KEY" -d '{"content":[{"type":"text","text":"Explain what PAA is."}]}'
 ```
 
 The response is a Server-Sent Events stream. `/health` belongs to the local
 demo host; the conversation routes are the PAA-facing contract.
+The demo accepts the configured owner token as `X-API-Key` or Bearer auth,
+rejects requests over 1 MiB, and saves conversations as plain JSON under
+`RUNTIME_MEMORY_ROOT` (default `.paa-memory`). This token is for local testing.
+To select the included OpenAI-compatible adapter at startup, set
+`RUNTIME_PROVIDER_ADAPTER=openai-compatible`, `PAA_MODEL_API_BASE_URL`,
+`PAA_MODEL_ID`, `PAA_MODEL_CONTEXT_LIMIT`, and `PAA_MODEL_API_KEY` in the local
+environment. The model context limit must be a verified value for that model.
 
 ## Validate the template
+
+Run the live Gateway check from this workspace (it starts the server with a
+temporary token and memory root, then verifies auth, SSE, filters, size limits,
+and restart persistence):
+
+```bash
+node ../paa-conformance-validator/bin/paa-live-target.js --target paa.target.json
+```
 
 Run the complete self-contained Go validation path:
 

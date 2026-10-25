@@ -4,8 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +49,7 @@ type Gateway struct {
 	CurrentProvider func() string
 	mu              sync.Mutex
 	conversations   map[string]*Conversation
+	persistencePath string
 }
 
 func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
@@ -51,6 +57,36 @@ func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
 		memoryStore = memory.NewStore(".paa-memory")
 	}
 	return &Gateway{Engine: engineLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, CurrentProvider: func() string { return "local" }, conversations: map[string]*Conversation{}}
+}
+
+func (g *Gateway) EnablePersistence(root string) error {
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return err
+	}
+	g.persistencePath = filepath.Join(root, "conversations.json")
+	content, err := os.ReadFile(g.persistencePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(content, &g.conversations)
+}
+
+func (g *Gateway) saveLocked() error {
+	if g.persistencePath == "" {
+		return nil
+	}
+	content, err := json.MarshalIndent(g.conversations, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary := g.persistencePath + ".tmp"
+	if err := os.WriteFile(temporary, content, 0600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, g.persistencePath)
 }
 
 func (g *Gateway) Handle(ctx context.Context, method, path string, body map[string]any, headers map[string]string) Response {
@@ -61,7 +97,7 @@ func (g *Gateway) Handle(ctx context.Context, method, path string, body map[stri
 	method = strings.ToUpper(method)
 	route := parsed.Path
 	if method == "GET" && route == "/conversations" {
-		return g.listConversations()
+		return g.listConversations(parsed.Query())
 	}
 	if method == "GET" && strings.HasPrefix(route, "/conversations/") {
 		return g.getConversation(strings.TrimPrefix(route, "/conversations/"))
@@ -101,6 +137,10 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 	user := types.Message{Role: "user", Content: content}
 	g.appendMessageLocked(conversation, user)
+	if err := g.saveLocked(); err != nil {
+		g.mu.Unlock()
+		return errorResponse(500, "storage_error", "Conversation could not be saved.")
+	}
 	messages := make([]types.Message, 0, len(conversation.Messages))
 	for _, stored := range conversation.Messages {
 		messages = append(messages, stored.Message)
@@ -150,18 +190,24 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 		events[index].Data["_event_type"] = events[index].Event
 		if events[index].Event == "done" {
 			completed = true
-			if _, ok := events[index].Data["message_id"]; !ok {
-				events[index].Data["message_id"] = newID("msg")
-			}
 			if _, ok := events[index].Data["finish_reason"]; !ok {
 				events[index].Data["finish_reason"] = "stop"
 			}
 		}
 	}
-	if completed && len(textParts) > 0 {
+	if completed {
 		g.mu.Lock()
-		g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}}, model, provider)
+		messageID := g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}}, model, provider)
+		if err := g.saveLocked(); err != nil {
+			g.mu.Unlock()
+			return errorResponse(500, "storage_error", "Conversation could not be saved.")
+		}
 		g.mu.Unlock()
+		for index := range events {
+			if events[index].Event == "done" {
+				events[index].Data["message_id"] = messageID
+			}
+		}
 	}
 	return Response{
 		Status:  200,
@@ -170,7 +216,7 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 }
 
-func (g *Gateway) appendMessageLocked(conversation *Conversation, message types.Message, provenance ...string) {
+func (g *Gateway) appendMessageLocked(conversation *Conversation, message types.Message, provenance ...string) string {
 	now := timestamp()
 	messageID := newID("msg")
 	stored := StoredMessage{ID: messageID, Message: message, CreatedAt: now}
@@ -187,16 +233,72 @@ func (g *Gateway) appendMessageLocked(conversation *Conversation, message types.
 		entry.Metadata = map[string]any{"model": stored.Model, "provider": stored.Provider}
 	}
 	g.Memory.Record(entry)
+	return messageID
 }
 
-func (g *Gateway) listConversations() Response {
+func (g *Gateway) listConversations(query url.Values) Response {
+	limit, err := strconv.Atoi(query.Get("limit"))
+	if query.Get("limit") == "" {
+		limit = 20
+		err = nil
+	}
+	if err != nil || limit < 1 || limit > 100 {
+		return errorResponse(400, "invalid_request", "Invalid limit.")
+	}
+	offset, err := strconv.Atoi(query.Get("offset"))
+	if query.Get("offset") == "" {
+		offset = 0
+		err = nil
+	}
+	if err != nil || offset < 0 {
+		return errorResponse(400, "invalid_request", "Invalid offset.")
+	}
+	var after, before time.Time
+	if query.Get("from") != "" {
+		after, err = time.Parse(time.RFC3339, query.Get("from"))
+		if err != nil {
+			return errorResponse(400, "invalid_request", "Invalid from timestamp.")
+		}
+	}
+	if query.Get("to") != "" {
+		before, err = time.Parse(time.RFC3339, query.Get("to"))
+		if err != nil {
+			return errorResponse(400, "invalid_request", "Invalid to timestamp.")
+		}
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	items := make([]map[string]any, 0, len(g.conversations))
+	search := strings.ToLower(query.Get("search"))
 	for _, conversation := range g.conversations {
+		created, _ := time.Parse(time.RFC3339Nano, conversation.CreatedAt)
+		if !after.IsZero() && created.Before(after) {
+			continue
+		}
+		if !before.IsZero() && created.After(before) {
+			continue
+		}
+		if search != "" {
+			content := ""
+			for _, message := range conversation.Messages {
+				content += fmt.Sprint(message.Message.Content)
+			}
+			if !strings.Contains(strings.ToLower(content), search) {
+				continue
+			}
+		}
 		items = append(items, map[string]any{"id": conversation.ID, "created_at": conversation.CreatedAt, "updated_at": conversation.UpdatedAt, "message_count": len(conversation.Messages)})
 	}
-	return Response{Status: 200, Headers: jsonHeaders(), Body: map[string]any{"conversations": items, "total": len(items)}}
+	sort.Slice(items, func(i, j int) bool { return items[i]["updated_at"].(string) > items[j]["updated_at"].(string) })
+	total := len(items)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return Response{Status: 200, Headers: jsonHeaders(), Body: map[string]any{"conversations": items[offset:end], "total": total, "limit": limit, "offset": offset}}
 }
 
 func (g *Gateway) getConversation(id string) Response {
