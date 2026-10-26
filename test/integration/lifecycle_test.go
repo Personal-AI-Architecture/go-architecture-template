@@ -9,13 +9,13 @@ import (
 	"testing"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/adapters"
-	"github.com/Personal-AI-Architecture/go-architecture-template/internal/engine"
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/agentloop"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/gateway"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/memory"
 )
 
 func TestGatewayHTTPAndMemoryLifecycle(t *testing.T) {
-	service := gateway.New(engine.NewAgentLoop(adapters.MockAdapter{Response: "http-ok"}, nil), memory.NewStore("/tmp/paa-go-test-memory"))
+	service := gateway.New(agentloop.NewAgentLoop(adapters.MockAdapter{Response: "http-ok"}, nil), memory.NewStore("/tmp/paa-go-test-memory"))
 	server := httptest.NewServer(gateway.Handler(service, "test-token"))
 	defer server.Close()
 

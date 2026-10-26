@@ -11,7 +11,7 @@ import (
 	"strconv"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/adapters"
-	"github.com/Personal-AI-Architecture/go-architecture-template/internal/engine"
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/agentloop"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/gateway"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/memory"
 )
@@ -106,7 +106,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	service := gateway.New(engine.NewAgentLoop(adapter, nil), mem)
+	service := gateway.New(agentloop.NewAgentLoop(adapter, nil), mem)
 	service.CurrentSelection = func() (string, string, error) {
 		selection, found, err := mem.ReadPreferences()
 		if err != nil {

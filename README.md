@@ -10,9 +10,14 @@ provider-profile routing, saved reply provenance, context limits, and notices
 for omitted complete turns. This starter's small text journey is not a full
 implementation of every PAA tool and product conformance case.
 
-The live HTTP starter currently starts the Agent Loop with an empty tool list;
-it does not load configured `tool_sources`. Tool execution and source-driven
-discovery still need implementation in a product built from this starter.
+The template includes a pass-through Streamable HTTP MCP tool-source adapter. Use
+`adapters.NewMCPToolSource(id, url, client)`, then `Discover()` and `Call(name, arguments)` to discover an external service and call its tools. The adapter binds
+canonical source identity to the configured source ID; the service cannot
+choose that identity. The live HTTP starter still starts the Agent Loop with
+an empty tool list. Wiring source discovery and tool execution into that host
+remains product integration work. These adapters target the MCP
+`2025-03-26` Streamable HTTP lifecycle; other MCP transports and the newer
+sessionless lifecycle require a separate adapter.
 
 ## What you get
 
@@ -143,7 +148,7 @@ go run ./cmd/validate \
 The current contract baseline is pinned to:
 
 ```text
-cfeb96df743feee91afc80ac81f0c4fd9a62c123
+47d6471a8307fa59a83c58dd635820b0cb0965b6
 ```
 
 The Go checks are the internal implementation gate. The shared validator is
@@ -160,7 +165,7 @@ The executable checks cover this starter's text-message journey and declared com
 ```text
 Client
   -> Gateway routes
-  -> canonical EngineRequest
+  -> canonical AgentLoopRequest
   -> Agent Loop
   -> Model Adapter
   -> canonical stream events
@@ -221,7 +226,7 @@ internal/
   adapters/       Provider boundary and adapter loader
   checks/         Contract, import, formatting, and lock-in checks
   config/         Runtime configuration
-  engine/         Provider-neutral Agent Loop
+  agentloop/         Provider-neutral Agent Loop
   gateway/        PAA routes, conversation store, and HTTP host
   memory/         Memory persistence boundary
   types/          Canonical PAA contracts
