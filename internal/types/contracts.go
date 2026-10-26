@@ -32,7 +32,7 @@ type ToolSource struct {
 	Kind string `json:"kind"`
 }
 
-type EngineRequestMetadata struct {
+type AgentLoopRequestMetadata struct {
 	CorrelationID      string         `json:"correlation_id"`
 	ConversationID     string         `json:"conversation_id,omitempty"`
 	Trigger            string         `json:"trigger,omitempty"`
@@ -42,13 +42,13 @@ type EngineRequestMetadata struct {
 	AllowedToolSources []string       `json:"allowed_tool_sources,omitempty"`
 }
 
-type EngineRequest struct {
-	Messages       []Message             `json:"messages"`
-	Metadata       EngineRequestMetadata `json:"metadata"`
-	Model          string                `json:"model"`
-	Provider       string                `json:"provider"`
-	AuthContext    map[string]any        `json:"auth_context"`
-	ContextSummary map[string]any        `json:"context_summary,omitempty"`
+type AgentLoopRequest struct {
+	Messages       []Message                `json:"messages"`
+	Metadata       AgentLoopRequestMetadata `json:"metadata"`
+	Model          string                   `json:"model"`
+	Provider       string                   `json:"provider"`
+	AuthContext    map[string]any           `json:"auth_context"`
+	ContextSummary map[string]any           `json:"context_summary,omitempty"`
 }
 
 type CompletionRequest struct {

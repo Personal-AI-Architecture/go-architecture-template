@@ -112,7 +112,7 @@ func CheckContracts(root, sourceCheckout string) []string {
 	}
 
 	gateway := readText(root, "contracts/openapi/gateway-api.yaml")
-	engine := readText(root, "contracts/openapi/gateway-engine.yaml")
+	agentLoopContract := readText(root, "contracts/openapi/gateway-agent-loop.yaml")
 	model := readText(root, "contracts/openapi/model-api.yaml")
 	for _, route := range []string{"/conversations/messages", "/conversations", "/conversations/{id}", "/conversations/{id}/messages"} {
 		if !strings.Contains(gateway, "  "+route+":") {
@@ -128,7 +128,7 @@ func CheckContracts(root, sourceCheckout string) []string {
 		}
 	}
 	for _, marker := range []string{"/agent-loop/chat:", "AgentLoopRequest:", "RequestMetadata:", "SSEStream:", "auth_context:"} {
-		if !strings.Contains(engine, marker) {
+		if !strings.Contains(agentLoopContract, marker) {
 			errors = append(errors, "Gateway-Agent Loop contract is missing: "+marker+".")
 		}
 	}
@@ -181,12 +181,12 @@ func CheckContracts(root, sourceCheckout string) []string {
 
 func CheckImports(root string) []string {
 	allowed := map[string]map[string]bool{
-		"adapters": {"adapters": true, "types": true},
-		"config":   {"config": true, "types": true},
-		"engine":   {"engine": true, "types": true, "adapters": true},
-		"gateway":  {"gateway": true, "types": true, "engine": true, "memory": true},
-		"memory":   {"memory": true, "types": true},
-		"types":    {"types": true},
+		"adapters":  {"adapters": true, "types": true},
+		"config":    {"config": true, "types": true},
+		"agentloop": {"agentloop": true, "types": true, "adapters": true},
+		"gateway":   {"gateway": true, "types": true, "agentloop": true, "memory": true},
+		"memory":    {"memory": true, "types": true},
+		"types":     {"types": true},
 	}
 	errors := make([]string, 0)
 	for _, path := range goFiles(filepath.Join(root, "internal")) {
@@ -220,7 +220,7 @@ func CheckImports(root string) []string {
 
 func CheckLockIn(root string) []string {
 	errors := make([]string, 0)
-	for _, relative := range []string{"internal/adapters/loader.go", "internal/adapters/mock.go", "internal/adapters/openai_compatible.go", "internal/engine/loop.go", "internal/types/contracts.go"} {
+	for _, relative := range []string{"internal/adapters/loader.go", "internal/adapters/mock.go", "internal/adapters/openai_compatible.go", "internal/agentloop/loop.go", "internal/types/contracts.go"} {
 		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
 			errors = append(errors, "Missing required file: "+relative)
 		}
@@ -242,9 +242,9 @@ func CheckLockIn(root string) []string {
 		}
 	}
 	contracts := readText(root, "internal/types/contracts.go")
-	metadataStart := strings.Index(contracts, "type EngineRequestMetadata struct")
+	metadataStart := strings.Index(contracts, "type AgentLoopRequestMetadata struct")
 	if metadataStart < 0 {
-		errors = append(errors, "EngineRequestMetadata contract is missing.")
+		errors = append(errors, "AgentLoopRequestMetadata contract is missing.")
 	} else {
 		metadata := contracts[metadataStart:]
 		if end := strings.Index(metadata, "}"); end >= 0 {
@@ -252,7 +252,7 @@ func CheckLockIn(root string) []string {
 		}
 		for _, forbidden := range []string{"\n\tProviderAdapter ", "\n\tModel ", "\n\tTools ", "\n\tToolSources "} {
 			if strings.Contains(metadata, forbidden) {
-				errors = append(errors, "EngineRequestMetadata must not include runtime reconfiguration key: "+forbidden)
+				errors = append(errors, "AgentLoopRequestMetadata must not include runtime reconfiguration key: "+forbidden)
 			}
 		}
 	}

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Personal-AI-Architecture/go-architecture-template/internal/engine"
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/agentloop"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/memory"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
@@ -43,7 +43,7 @@ type Response struct {
 }
 
 type Gateway struct {
-	Engine           *engine.AgentLoop
+	AgentLoop        *agentloop.AgentLoop
 	Memory           *memory.Store
 	CurrentModel     func() string
 	CurrentProvider  func() string
@@ -53,11 +53,11 @@ type Gateway struct {
 	persistencePath  string
 }
 
-func New(engineLoop *engine.AgentLoop, memoryStore *memory.Store) *Gateway {
+func New(agentLoop *agentloop.AgentLoop, memoryStore *memory.Store) *Gateway {
 	if memoryStore == nil {
 		memoryStore = memory.NewStore(".paa-memory")
 	}
-	return &Gateway{Engine: engineLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, CurrentProvider: func() string { return "local" }, conversations: map[string]*Conversation{}}
+	return &Gateway{AgentLoop: agentLoop, Memory: memoryStore, CurrentModel: func() string { return "mock" }, CurrentProvider: func() string { return "local" }, conversations: map[string]*Conversation{}}
 }
 
 func (g *Gateway) EnablePersistence(root string) error {
@@ -131,7 +131,7 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 			return errorResponse(503, "selection_unavailable", "Current model and provider preferences are unavailable.")
 		}
 	}
-	limit := g.Engine.ContextLimits.Limit(provider, model)
+	limit := g.AgentLoop.ContextLimits.Limit(provider, model)
 	if limit == 0 {
 		return errorResponse(503, "context_limit_unknown", "No safe context limit for selected provider and model.")
 	}
@@ -160,7 +160,7 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 	conversationID := conversation.ID
 	g.mu.Unlock()
-	selected, omitted, fits := types.SelectCompleteTurns(messages, g.Engine.Tools, limit)
+	selected, omitted, fits := types.SelectCompleteTurns(messages, g.AgentLoop.Tools, limit)
 	if !fits {
 		return errorResponse(422, "context_overflow", "Current message exceeds the selected model context window.")
 	}
@@ -169,9 +169,9 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	if value, ok := metadata["correlation_id"].(string); ok && strings.TrimSpace(value) != "" {
 		correlationID = strings.TrimSpace(value)
 	}
-	events := g.Engine.Run(ctx, types.EngineRequest{
+	events := g.AgentLoop.Run(ctx, types.AgentLoopRequest{
 		Messages: selected,
-		Metadata: types.EngineRequestMetadata{
+		Metadata: types.AgentLoopRequestMetadata{
 			CorrelationID:  correlationID,
 			ConversationID: conversationID,
 			ClientContext:  metadata,

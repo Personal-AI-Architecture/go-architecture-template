@@ -6,9 +6,9 @@ import (
 	"os"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/adapters"
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/agentloop"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/checks"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/config"
-	"github.com/Personal-AI-Architecture/go-architecture-template/internal/engine"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/gateway"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/memory"
 )
@@ -45,7 +45,7 @@ func run() error {
 		return fmt.Errorf("unknown adapter should be rejected")
 	}
 
-	service := gateway.New(engine.NewAgentLoop(adapters.MockAdapter{Response: "acceptance-ok"}, nil), memory.NewStore(runtime.MemoryRoot))
+	service := gateway.New(agentloop.NewAgentLoop(adapters.MockAdapter{Response: "acceptance-ok"}, nil), memory.NewStore(runtime.MemoryRoot))
 	headers := map[string]string{"x-actor-id": "actor-acceptance", "x-actor-permissions": "memory:read,memory:write"}
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}}, headers)
 	if response.Status != 200 || len(response.Stream) < 2 {

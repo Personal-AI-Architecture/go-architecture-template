@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/adapters"
-	"github.com/Personal-AI-Architecture/go-architecture-template/internal/engine"
+	"github.com/Personal-AI-Architecture/go-architecture-template/internal/agentloop"
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
 
@@ -25,7 +25,7 @@ func (a *recordingAdapter) Stream(_ context.Context, request types.CompletionReq
 
 func TestGatewayForwardsCanonicalModelErrorWithoutSavingReply(t *testing.T) {
 	adapter := &recordingAdapter{chunks: []types.ModelStreamChunk{{Type: "error", Delta: map[string]any{"code": "capability_unsupported", "capability": "image_input", "message": "secret=/tmp/key"}}}}
-	service := New(engine.NewAgentLoop(adapter, nil), nil)
+	service := New(agentloop.NewAgentLoop(adapter, nil), nil)
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "hello"}}}, map[string]string{"X-Actor-ID": "owner", "X-Actor-Permissions": "read"})
 	if len(response.Stream) != 1 || response.Stream[0].Event != "error" || response.Stream[0].Data["code"] != "capability_unsupported" || response.Stream[0].Data["capability"] != "image_input" || len(adapter.requests) != 1 {
 		t.Fatalf("model error not forwarded: %#v", response)
@@ -37,7 +37,7 @@ func TestGatewayForwardsCanonicalModelErrorWithoutSavingReply(t *testing.T) {
 }
 
 func TestCanonicalMessageRouteStreamsAndPersists(t *testing.T) {
-	service := New(engine.NewAgentLoop(adapters.MockAdapter{Response: "gateway-ok"}, nil), nil)
+	service := New(agentloop.NewAgentLoop(adapters.MockAdapter{Response: "gateway-ok"}, nil), nil)
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "Hello"}}}, map[string]string{
 		"x-actor-id": "actor-1", "x-actor-permissions": "memory:read,memory:write",
 	})
@@ -58,7 +58,7 @@ func TestCanonicalMessageRouteStreamsAndPersists(t *testing.T) {
 }
 
 func TestOldStringContentIsRejected(t *testing.T) {
-	service := New(engine.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
+	service := New(agentloop.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": "Hello"}, map[string]string{"X-Actor-ID": "actor", "X-Actor-Permissions": "read"})
 	if response.Status != 400 {
 		t.Fatalf("expected invalid request: %#v", response)
@@ -66,7 +66,7 @@ func TestOldStringContentIsRejected(t *testing.T) {
 }
 
 func TestPublicRequestRejectsProviderShapedMessages(t *testing.T) {
-	service := New(engine.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
+	service := New(agentloop.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
 	response := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"messages": []any{}}, map[string]string{"X-Actor-ID": "actor", "X-Actor-Permissions": "read"})
 	if response.Status != 400 {
 		t.Fatalf("expected invalid request: %#v", response)
@@ -74,7 +74,7 @@ func TestPublicRequestRejectsProviderShapedMessages(t *testing.T) {
 }
 
 func TestPartExtensionsAreInertAndUnknownCoreFieldsFail(t *testing.T) {
-	service := New(engine.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
+	service := New(agentloop.NewAgentLoop(adapters.MockAdapter{}, nil), nil)
 	headers := map[string]string{"X-Actor-ID": "owner", "X-Actor-Permissions": "read"}
 	valid := service.Handle(context.Background(), "POST", "/conversations/messages", map[string]any{"content": []map[string]any{{"type": "text", "text": "hello", "extensions": map[string]any{"future": "ignored"}}}}, headers)
 	if valid.Status != 200 {
@@ -88,7 +88,7 @@ func TestPartExtensionsAreInertAndUnknownCoreFieldsFail(t *testing.T) {
 
 func TestProviderSwitchAndSavedReplyProvenance(t *testing.T) {
 	adapter := &recordingAdapter{}
-	loop := engine.NewAgentLoop(adapter, nil)
+	loop := agentloop.NewAgentLoop(adapter, nil)
 	loop.ContextLimits = types.ContextLimits{"alpha": {"m1": 8192}, "beta": {"m2": 8192}}
 	service := New(loop, nil)
 	provider, model := "alpha", "m1"
@@ -110,7 +110,7 @@ func TestProviderSwitchAndSavedReplyProvenance(t *testing.T) {
 
 func TestContextLimitBlocksOrOmitsWithoutChangingHistory(t *testing.T) {
 	adapter := &recordingAdapter{}
-	loop := engine.NewAgentLoop(adapter, nil)
+	loop := agentloop.NewAgentLoop(adapter, nil)
 	service := New(loop, nil)
 	headers := map[string]string{"X-Actor-ID": "owner", "X-Actor-Permissions": "read"}
 	body := map[string]any{"content": []map[string]any{{"type": "text", "text": "hello"}}}

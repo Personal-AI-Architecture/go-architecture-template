@@ -1,4 +1,4 @@
-package engine
+package agentloop
 
 import (
 	"context"
@@ -27,7 +27,7 @@ func TestModelErrorCategoriesAreSafeAndStopTheTurn(t *testing.T) {
 	for _, scenario := range []struct{ code, capability string }{{"model_unavailable", ""}, {"capability_unsupported", "image_input"}} {
 		adapter := &recordingModelAdapter{chunks: []types.ModelStreamChunk{{Type: "error", Delta: map[string]any{"code": scenario.code, "capability": scenario.capability, "message": "secret=/tmp/key"}}}}
 		loop := NewAgentLoop(adapter, nil)
-		events := loop.Run(context.Background(), types.EngineRequest{Messages: []types.Message{{Role: "user", Content: "hello"}}, Metadata: types.EngineRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr"}}, nil)
+		events := loop.Run(context.Background(), types.AgentLoopRequest{Messages: []types.Message{{Role: "user", Content: "hello"}}, Metadata: types.AgentLoopRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr"}}, nil)
 		if len(events) != 1 || events[0].Event != "error" || events[0].Data["code"] != scenario.code || len(adapter.requests) != 1 || adapter.requests[0].Model != "mock" || adapter.requests[0].Provider != "local" || strings.Contains(events[0].Data["message"].(string), "secret") {
 			t.Fatalf("model failure was lost or leaked: %#v", events)
 		}
@@ -39,7 +39,7 @@ func TestModelErrorCategoriesAreSafeAndStopTheTurn(t *testing.T) {
 
 func TestAuthContextRejectsUnknownTopLevelField(t *testing.T) {
 	loop := NewAgentLoop(adapters.MockAdapter{}, nil)
-	events := loop.Run(context.Background(), types.EngineRequest{Metadata: types.EngineRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr", "unexpected": "spoof"}}, nil)
+	events := loop.Run(context.Background(), types.AgentLoopRequest{Metadata: types.AgentLoopRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr", "unexpected": "spoof"}}, nil)
 	if len(events) != 1 || events[0].Data["code"] != "auth_error" {
 		t.Fatalf("unknown auth field accepted: %#v", events)
 	}
@@ -47,9 +47,9 @@ func TestAuthContextRejectsUnknownTopLevelField(t *testing.T) {
 
 func TestAgentLoopEmitsCanonicalEvents(t *testing.T) {
 	loop := NewAgentLoop(adapters.MockAdapter{Response: "hello"}, nil)
-	events := loop.Run(context.Background(), types.EngineRequest{
+	events := loop.Run(context.Background(), types.AgentLoopRequest{
 		Messages: []types.Message{{Role: "user", Content: "Hi"}},
-		Metadata: types.EngineRequestMetadata{CorrelationID: "corr-1"},
+		Metadata: types.AgentLoopRequestMetadata{CorrelationID: "corr-1"},
 		Model:    "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "actor-1"}, "correlation_id": "corr-1"},
 	}, map[string]string{"X-Actor-ID": "actor-1", "X-Actor-Permissions": "memory:read"})
 	if len(events) != 2 || events[0].Event != "text-delta" || events[1].Event != "done" {
@@ -59,7 +59,7 @@ func TestAgentLoopEmitsCanonicalEvents(t *testing.T) {
 
 func TestAgentLoopRequiresActorHeaders(t *testing.T) {
 	loop := NewAgentLoop(adapters.MockAdapter{}, nil)
-	events := loop.Run(context.Background(), types.EngineRequest{Metadata: types.EngineRequestMetadata{CorrelationID: "corr-1"}}, nil)
+	events := loop.Run(context.Background(), types.AgentLoopRequest{Metadata: types.AgentLoopRequestMetadata{CorrelationID: "corr-1"}}, nil)
 	if len(events) != 1 || events[0].Event != "error" {
 		t.Fatalf("expected actor header error: %#v", events)
 	}
@@ -69,7 +69,7 @@ func TestDerivedSummaryIsLabelledAndEphemeral(t *testing.T) {
 	adapter := &recordingModelAdapter{}
 	loop := NewAgentLoop(adapter, nil)
 	original := []types.Message{{Role: "user", Content: []map[string]any{{"type": "text", "text": "current"}}}}
-	request := types.EngineRequest{Messages: original, Metadata: types.EngineRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr"}, ContextSummary: map[string]any{"source": "gateway", "method": "deterministic", "omitted_turn_count": 1, "text": "older fact"}}
+	request := types.AgentLoopRequest{Messages: original, Metadata: types.AgentLoopRequestMetadata{CorrelationID: "corr"}, Model: "mock", Provider: "local", AuthContext: map[string]any{"actor": map[string]any{"id": "owner"}, "correlation_id": "corr"}, ContextSummary: map[string]any{"source": "gateway", "method": "deterministic", "omitted_turn_count": 1, "text": "older fact"}}
 	loop.Run(context.Background(), request, nil)
 	if len(original) != 1 || len(adapter.requests) != 1 || len(adapter.requests[0].Messages) != 2 {
 		t.Fatalf("summary mutated saved messages or missed model: %#v", adapter.requests)

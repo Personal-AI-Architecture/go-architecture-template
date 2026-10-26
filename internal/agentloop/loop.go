@@ -1,4 +1,4 @@
-package engine
+package agentloop
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func NewAgentLoop(adapter types.ModelAdapter, tools []types.ToolDefinition) *Age
 	return &AgentLoop{Adapter: adapter, Tools: append([]types.ToolDefinition(nil), tools...), ContextLimits: limits}
 }
 
-func (a *AgentLoop) Run(ctx context.Context, request types.EngineRequest, actorHeaders map[string]string) []types.StreamEvent {
+func (a *AgentLoop) Run(ctx context.Context, request types.AgentLoopRequest, actorHeaders map[string]string) []types.StreamEvent {
 	for key := range request.AuthContext {
 		switch key {
 		case "actor", "authentication_id", "authenticated_at", "expires_at", "correlation_id":
