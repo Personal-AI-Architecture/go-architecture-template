@@ -2,12 +2,15 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
+	"strings"
 
 	"github.com/Personal-AI-Architecture/go-architecture-template/internal/types"
 )
 
 var capabilityName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+var toolSourceName = regexp.MustCompile(`^([a-z0-9]+)[_:-]`)
 
 func safeModelError(delta map[string]any) map[string]any {
 	code, _ := delta["code"].(string)
@@ -21,6 +24,46 @@ func safeModelError(delta map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{"code": "provider_error", "message": "Model provider failed."}
+}
+
+func sourceIDForTool(name string, tools []types.ToolDefinition) string {
+	for _, tool := range tools {
+		if tool.Name == name && tool.Source.ID != "" {
+			return tool.Source.ID
+		}
+	}
+	if match := toolSourceName.FindStringSubmatch(strings.TrimSpace(name)); len(match) == 2 {
+		return match[1]
+	}
+	return "internal"
+}
+
+func normalizeToolArguments(delta map[string]any) map[string]any {
+	value := delta["arguments"]
+	if function, ok := delta["function"].(map[string]any); ok {
+		value = function["arguments"]
+	}
+	if arguments, ok := value.(map[string]any); ok {
+		return arguments
+	}
+	if encoded, ok := value.(string); ok {
+		var arguments map[string]any
+		if json.Unmarshal([]byte(encoded), &arguments) == nil && arguments != nil {
+			return arguments
+		}
+	}
+	return map[string]any{}
+}
+
+func serializeToolOutput(value any) string {
+	if output, ok := value.(string); ok {
+		return output
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "<unserializable>"
+	}
+	return string(encoded)
 }
 
 type AgentLoop struct {
@@ -91,9 +134,29 @@ func (a *AgentLoop) Run(ctx context.Context, request types.AgentLoopRequest, act
 				events = append(events, types.StreamEvent{Event: "text-delta", Data: map[string]any{"content": content}})
 			}
 		case "tool-call":
-			events = append(events, types.StreamEvent{Event: "tool-call", Data: chunk.Delta})
+			data := map[string]any{}
+			for key, value := range chunk.Delta {
+				data[key] = value
+			}
+			name, _ := data["name"].(string)
+			if function, ok := data["function"].(map[string]any); ok && name == "" {
+				name, _ = function["name"].(string)
+			}
+			if _, ok := data["source_id"].(string); !ok || data["source_id"] == "" {
+				data["source_id"] = sourceIDForTool(name, a.Tools)
+			}
+			data["name"] = name
+			data["arguments"] = normalizeToolArguments(data)
+			events = append(events, types.StreamEvent{Event: "tool-call", Data: data})
 		case "tool-result":
-			events = append(events, types.StreamEvent{Event: "tool-result", Data: chunk.Delta})
+			data := map[string]any{}
+			for key, value := range chunk.Delta {
+				data[key] = value
+			}
+			if output, ok := data["output"]; ok {
+				data["output"] = serializeToolOutput(output)
+			}
+			events = append(events, types.StreamEvent{Event: "tool-result", Data: data})
 		case "error":
 			events = append(events, types.StreamEvent{Event: "error", Data: safeModelError(chunk.Delta)})
 			return events
