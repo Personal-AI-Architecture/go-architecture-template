@@ -188,11 +188,77 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 	}
 
 	textParts := make([]string, 0)
+	assistantParts := make([]map[string]any, 0)
+	toolCalls := map[string]types.ToolCall{}
+	lastMessageID := ""
+	appendText := func(value string) {
+		if value == "" {
+			return
+		}
+		if len(assistantParts) > 0 && assistantParts[len(assistantParts)-1]["type"] == "text" {
+			assistantParts[len(assistantParts)-1]["text"] = fmt.Sprint(assistantParts[len(assistantParts)-1]["text"]) + value
+			return
+		}
+		assistantParts = append(assistantParts, map[string]any{"type": "text", "text": value})
+	}
+	flushAssistant := func() {
+		if len(assistantParts) == 0 && len(toolCalls) == 0 {
+			return
+		}
+		calls := make([]types.ToolCall, 0, len(toolCalls))
+		for _, call := range toolCalls {
+			calls = append(calls, call)
+		}
+		g.mu.Lock()
+		lastMessageID = g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: assistantParts, ToolCalls: calls}, model, provider)
+		_ = g.saveLocked()
+		g.mu.Unlock()
+		assistantParts = make([]map[string]any, 0)
+		toolCalls = map[string]types.ToolCall{}
+	}
+	parseToolResult := func(value any) any {
+		if encoded, ok := value.(string); ok {
+			var parsed any
+			if json.Unmarshal([]byte(encoded), &parsed) == nil {
+				return parsed
+			}
+		}
+		return value
+	}
 	completed := false
 	for index := range events {
 		if events[index].Event == "text-delta" {
 			if text, ok := events[index].Data["content"].(string); ok {
 				textParts = append(textParts, text)
+				appendText(text)
+			}
+		}
+		if events[index].Event == "tool-call" {
+			id, _ := events[index].Data["id"].(string)
+			name, _ := events[index].Data["name"].(string)
+			sourceID, _ := events[index].Data["source_id"].(string)
+			arguments, _ := events[index].Data["arguments"].(map[string]any)
+			if id != "" && name != "" {
+				call := types.ToolCall{ID: id, SourceID: sourceID, Name: name, Arguments: arguments}
+				toolCalls[id] = call
+				assistantParts = append(assistantParts, map[string]any{"type": "tool_call", "id": id, "source_id": sourceID, "name": name, "arguments": arguments})
+			}
+		}
+		if events[index].Event == "tool-result" {
+			flushAssistant()
+			id, _ := events[index].Data["id"].(string)
+			if id != "" {
+				isError := events[index].Data["error"] != nil && fmt.Sprint(events[index].Data["error"]) != ""
+				result := events[index].Data["output"]
+				if isError {
+					result = events[index].Data["error"]
+				} else {
+					result = parseToolResult(result)
+				}
+				g.mu.Lock()
+				lastMessageID = g.appendMessageLocked(conversation, types.Message{Role: "tool", Content: []map[string]any{{"type": "tool_result", "tool_call_id": id, "result": result, "is_error": isError}}, ToolCallID: id})
+				_ = g.saveLocked()
+				g.mu.Unlock()
 			}
 		}
 		events[index].Data["_event_type"] = events[index].Event
@@ -202,15 +268,22 @@ func (g *Gateway) message(ctx context.Context, body map[string]any, headers map[
 				events[index].Data["finish_reason"] = "stop"
 			}
 		}
+		if events[index].Event == "error" {
+			flushAssistant()
+		}
 	}
 	if completed {
-		g.mu.Lock()
-		messageID := g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}}, model, provider)
-		if err := g.saveLocked(); err != nil {
+		flushAssistant()
+		messageID := lastMessageID
+		if messageID == "" {
+			g.mu.Lock()
+			messageID = g.appendMessageLocked(conversation, types.Message{Role: "assistant", Content: []map[string]any{{"type": "text", "text": strings.Join(textParts, "")}}}, model, provider)
+			if err := g.saveLocked(); err != nil {
+				g.mu.Unlock()
+				return errorResponse(500, "storage_error", "Conversation could not be saved.")
+			}
 			g.mu.Unlock()
-			return errorResponse(500, "storage_error", "Conversation could not be saved.")
 		}
-		g.mu.Unlock()
 		for index := range events {
 			if events[index].Event == "done" {
 				events[index].Data["message_id"] = messageID

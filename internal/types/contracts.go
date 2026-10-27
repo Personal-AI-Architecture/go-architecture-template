@@ -5,6 +5,7 @@ import "context"
 
 type ToolCall struct {
 	ID               string         `json:"id"`
+	SourceID         string         `json:"source_id,omitempty"`
 	Name             string         `json:"name"`
 	Arguments        map[string]any `json:"arguments"`
 	InvalidArguments bool           `json:"invalid_arguments,omitempty"`
